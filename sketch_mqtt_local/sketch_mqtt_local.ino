@@ -10,6 +10,10 @@ String topics = "";  // Dein Topic wird wahrscheinlich noch umbenannt
 const char* mqtt_server = "192.168.2.34";  // IP-Adresse des Servers (ersetze durch die IP deines Rechners)
 const int mqtt_port = 1883;                 // Port des MQTT-Brokers (Standardport für MQTT ohne SSL/TLS)
 
+//Relais
+int relayPin = 5;      // Pin, an dem das Relais angeschlossen ist
+bool relayState = LOW; // Aktueller Zustand des Relais
+
 WiFiClient espClient;
 Preferences preferences;
 PubSubClient client(espClient);
@@ -32,16 +36,18 @@ void setup_wifi() {
   Serial.println("IP-Adresse: ");
   Serial.println(WiFi.localIP());
 }
-
-// success Nachricht senden
+ 
 //Nachrichten empfangen
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Nachricht empfangen [");
   Serial.print(topic);
   Serial.print("] ");
+  String payloadStr = "";
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
+    payloadStr += (char)payload[i]; 
   }
+  setRelayState(payloadStr);
   Serial.println();
   String newTopic = "response/" + String(topic);
   const char* payloadPublish = "success";
@@ -69,11 +75,22 @@ void reconnect() {
   }
 }
 
+void setRelayState(String state) {
+  if (state == "on") {
+    digitalWrite(relayPin, HIGH); // Relais einschalten
+  } else if (state == "off") {
+    digitalWrite(relayPin, LOW);  // Relais ausschalten
+  }
+}
+
 void setup() {
   delay(3000);
   Serial.begin(115200);
   Serial.print("start");
-  
+
+  pinMode(relayPin, OUTPUT);            // Setze den Relais-Pin als Ausgang
+  digitalWrite(relayPin, relayState);
+
   preferences.begin("wifi-config", true);
   ssid = preferences.getString("ssid", "");
   password = preferences.getString("password", "");
