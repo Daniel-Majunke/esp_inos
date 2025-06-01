@@ -6,9 +6,11 @@
 
 
 // WLAN-Konfiguration
-String ssid = "";      // Dein WLAN-Name
-String password = "";  // Dein WLAN-Passwort
-String topics = "";    // Dein MQTT-Topic
+String ssid = "";      
+String password = "";  
+String topics = "";    
+const char* ap_ssid = "ESP_Setup";
+const char* ap_password = "esp123456";
 
 // MQTT-Server-Konfiguration
 const char* mqtt_server = "autarkes-leben.eu";  // Domain des MQTT-Servers
@@ -17,11 +19,17 @@ const int mqtt_port = 8883;                     // Korrekter Port des MQTT-Broke
 // Relais
 int relayPin = 5;      // Pin, an dem das Relais angeschlossen ist
 bool relayState = LOW; // Aktueller Zustand des Relais
+const int buttonPin = 4; // Wähle hier einen freien GPIO-Pin für deinen Schalter (z.B. GPIO 13)
+
+bool lastButtonState = HIGH; 
+unsigned long buttonPressTime = 0; 
+const long longPressDuration = 3000; 
 
 WiFiClientSecure espClient;   // Verwende WiFiClientSecure für SSL-Verbindungen
 Preferences preferences;
 PubSubClient client(espClient);
 WebServer server(80);
+String htmlPage;
 
 bool apMode = false;   // Flag für Access Point Modus
 
@@ -44,7 +52,6 @@ void setup_wifi() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("");
     Serial.println("Verbindung fehlgeschlagen. Starte Access Point.");
-    startAccessPoint();
   } else {
     Serial.println("");
     Serial.println("WLAN verbunden");
@@ -53,31 +60,38 @@ void setup_wifi() {
   }
 }
 
-// Access Point starten
 void startAccessPoint() {
-  apMode = true;
-  WiFi.softAP("ESP32_Setup_AP");
-  IPAddress IP = WiFi.softAPIP();
-  Serial.print("Access Point gestartet. IP-Adresse: ");
-  Serial.println(IP);
-
-  // Webserver-Endpunkte definieren
+  Serial.println("Starting Access Point...");
+  WiFi.softAP(ap_ssid, ap_password);
+  delay(1000);
   server.on("/", handleRoot);
-  server.on("/save", handleSave);
+  server.on("/connect", handleSave);
   server.begin();
-  Serial.println("Webserver gestartet.");
+  Serial.println("Access Point started with SSID: " + String(ap_ssid));
 }
 
-// Root-Seite anzeigen (Formular für WLAN-Daten)
-void handleRoot() {
-  String page = "<html><body><h1>WLAN konfigurieren</h1>"
-                "<form action=\"/save\" method=\"post\">"
-                "SSID:<br><input type=\"text\" name=\"ssid\"><br>"
-                "Passwort:<br><input type=\"password\" name=\"password\"><br>"
-                "<input type=\"submit\" value=\"Speichern\">"
-                "</form></body></html>";
-  server.send(200, "text/html", page);
+
+void generateHtmlPage() {
+  int n = WiFi.scanNetworks();
+  Serial.println("Generating HTML page with available networks...");
+  htmlPage = "<!DOCTYPE HTML><html><head><title>WLAN-Konfiguration</title></head><body><h1>WLAN-Konfiguration</h1>";
+  htmlPage += "<form action=\"/connect\" method=\"post\">";
+  htmlPage += "SSID: <select name=\"ssid\">";
+  for (int i = 0; i < n; ++i) {
+    htmlPage += "<option value=\"" + WiFi.SSID(i) + "\">" + WiFi.SSID(i) + "</option>";
+    Serial.println("Found network: " + WiFi.SSID(i));
+  }
+  htmlPage += "</select><br>";
+  htmlPage += "Passwort: <input type=\"password\" name=\"password\"><br>";
+  htmlPage += "<input type=\"submit\" value=\"Verbinden\">";
+  htmlPage += "</form></body></html>";
 }
+void handleRoot() {
+  Serial.println("Serving HTML page on root request...");
+  generateHtmlPage();
+  server.send(200, "text/html", htmlPage);
+}
+
 
 // Verarbeitung des Formulars und Speichern der Daten
 void handleSave() {
@@ -129,7 +143,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void reconnect() {
   while (!client.connected()) {
     Serial.print("Versuche Verbindung zum MQTT-Server aufzubauen...");
-    if (client.connect("ESP32Client")) {
+    if (client.connect(topics.c_str())) {
       Serial.println("Verbunden");
       Serial.println("Abonniere Topic: " + topics);
 
@@ -145,6 +159,7 @@ void reconnect() {
 
 // Relaiszustand setzen
 void setRelayState(String state) {
+  Serial.println(state + "- state");
   if (state == "on") {
     digitalWrite(relayPin, HIGH); // Relais einschalten
     Serial.println("Relais eingeschaltet.");
@@ -163,6 +178,7 @@ void setup() {
 
   pinMode(relayPin, OUTPUT);            // Setze den Relais-Pin als Ausgang
   digitalWrite(relayPin, relayState);
+  pinMode(buttonPin, INPUT_PULLUP);
 
   // WLAN-Daten aus dem nichtflüchtigen Speicher laden
   preferences.begin("wifi-config", true);
@@ -186,7 +202,43 @@ void setup() {
   client.setCallback(callback);             // Callback für empfangene Nachrichten
 }
 
+void stopAccessPointAndRestart() {
+  Serial.println("Beende Access Point und starte neu...");
+  server.stop();
+  WiFi.softAPdisconnect(true); // Trenne den SoftAP komplett
+  apMode = false; // Setze das AP-Modus-Flag zurück
+  delay(1000);
+  ESP.restart(); // Neustart des ESP32, um in den normalen Modus zu gehen
+}
+
 void loop() {
+// Aktuellen Zustand des Tasters lesen
+  int currentButtonState = digitalRead(buttonPin);
+
+  if (currentButtonState != lastButtonState) {
+    if (currentButtonState == LOW) { // Taster wurde gerade gedrückt
+      buttonPressTime = millis(); // Zeitpunkt des Drückens merken
+      Serial.println("Taster gedrückt.");
+    } else { // Taster wurde gerade losgelassen
+      long duration = millis() - buttonPressTime;
+      Serial.print("Taster losgelassen. Dauer: ");
+      Serial.print(duration);
+      Serial.println(" ms");
+
+      if (duration >= longPressDuration) { // Wenn der Taster lange genug gedrückt wurde
+        Serial.println("Langes Drücken erkannt!");
+        if (apMode) {
+          // Wenn bereits im AP-Modus, beende ihn und starte neu (um in den WLAN-Modus zu wechseln)
+          stopAccessPointAndRestart();
+        } else {
+          // Wenn nicht im AP-Modus, starte ihn
+          startAccessPoint();
+        }
+      }
+    }
+    lastButtonState = currentButtonState; // Letzten Zustand aktualisieren
+  }
+
   if (apMode) {
     server.handleClient(); // Webserver für Access Point
   } else {

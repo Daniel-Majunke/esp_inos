@@ -8,7 +8,10 @@
 
 const char* ap_ssid = "ESP_Setup";
 const char* ap_password = "esp123456";
-const char* register_code = "uT8j@zph3#";
+const int device_id =9;
+const char* device_name = "DAK";
+const char* user_id = "358c82ee-5c56-40a9-9e40-742f4e7b898a";
+
 bool configRetrieved = false;
 String ssid = "";
 String password = ""; 
@@ -41,9 +44,9 @@ void checkForUpdate() {
     Serial.println("Checking for OTA update...");
     HTTPClient http;
 
-    http.begin("http://192.168.2.34:5000/api/Update/GetFirmware");
+    http.begin("http://192.168.178.28:5000/api/Update/GetFirmware");
     http.addHeader("Content-Type", "application/json");
-    String jsonPayload = "{\"registerCode\": \"" + String(register_code) + "\", \"macAddress\": \"" + macAddress + "\"}";
+    String jsonPayload = "{\"userId\": \"" + String(user_id) + "\", \"deviceid\": \"" + device_id + "\", \"devicename\": \"" + String(device_name) + "\"}";
     int httpCode = http.POST(jsonPayload);
     if (httpCode == 200) {  // HTTP OK
         int contentLength = http.getSize();
@@ -93,9 +96,11 @@ void handleRoot() {
 }
 
 void startAccessPoint() {
+  ssid = "";
+  password = ""; 
   Serial.println("Starting Access Point...");
   WiFi.softAP(ap_ssid, ap_password);
-  delay(1000);
+  delay(3000);
   server.on("/", handleRoot);
   server.on("/connect", handleConnect);
   server.begin();
@@ -165,10 +170,10 @@ void fetchConfig() {
   Serial.println("Fetching configuration from server...");
   while (!configRetrieved) {
     HTTPClient http;
-    http.begin("http://192.168.2.34:5000/api/Update/GetConfig");
+    http.begin("http://192.168.178.28:5000/api/Update/GetConfig");
     http.addHeader("Content-Type", "application/json");
 
-    String jsonPayload = "{\"registerCode\": \"" + String(register_code) + "\", \"macAddress\": \"" + macAddress + "\"}";
+    String jsonPayload = "{\"userId\": \"" + String(user_id) + "\", \"deviceid\": \"" + device_id + "\", \"devicename\": \"" + device_name + "\"}";
     Serial.println("Sending payload: " + jsonPayload);
     int httpResponseCode = http.POST(jsonPayload);
 
@@ -220,9 +225,8 @@ void setup() {
   preferences.begin("mqtt-config", true);
   configRetrieved = preferences.getBool("getConfig", false);
   preferences.end();
-  macAddress = WiFi.macAddress();
-  Serial.println("macAdress first load" + macAddress);
-  if (ssid != "" && password != "") {
+
+  if (ssid != "") {
     Serial.println("Found saved WiFi credentials, attempting to connect...");
     connectToWiFi(ssid, password);
     if (WiFi.status() == WL_CONNECTED) {
